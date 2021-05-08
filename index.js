@@ -1,7 +1,9 @@
 const fetch = require('node-fetch');
-const { sleep } = require('./util');
+const { sleep, isInArchive, getHighestQualityUrl } = require('./util');
 const filenamify = require('filenamify');
 const fs = require('fs');
+const https = require('https');
+const path = require('path');
 
 const apiKey = 'API_KEY';
 const destination = '/mnt/d/Giant Bomb Archive';
@@ -15,29 +17,43 @@ let execSync = require("child_process").execSync;
 
     for (show of shows) {
       console.log(`Getting videos for show "${show.title}"...`);
-      const videos = await getVideos(show.id);
+      const videos = await getVideos(show);
       console.log(`Downloading videos for show "${show.title}"...`);
-      downloadVideos(show);
+      await downloadVideos(videos);
     }
   }
 )();
 
-function downloadVideos(show) {
+async function downloadVideos(videos) {
+  const archivePath = path.resolve(process.cwd(), "gb-dl-archive.json");
   // Make show directory if it doesn't already exist
-  if (!fs.existsSync(`${destination}/${filenamify(show.title)}`)) {
-    console.log(`Making directory ${`${destination}/${filenamify(show.title)}`}`)
-    fs.mkdirSync(`${destination}/${filenamify(show.title)}`);
-  }
-  for (let i = 0, moreResults = true; moreResults; i++) {
-    try {
-      execSync(
-        `npx gb-dl --api-key ${apiKey} --archive --show-name "${show.title}" --video-number ${i} --out-dir "${destination}/${filenamify(show.title)}"`,
-        { stdio: "inherit" } // this will allow us to see the console output as it downloads
-      );
-    } catch (error) {
-      console.error(error);
-      moreResults = false;
+  if (videos.length > 1) {
+    if (!fs.existsSync(`${destination}/${filenamify(videos[0].show.title)}`)) {
+      console.log(`Making directory ${`${destination}/${filenamify(videos[0].show.title)}`}`)
+      fs.mkdirSync(`${destination}/${filenamify(videos[0].show.title)}`);
     }
+  }
+  for (video of videos) {
+    if (!isInArchive(video.url, archivePath)) {
+      console.log(`Found a show not in the archive!`)
+      try {
+        const file = fs.createWriteStream(`${destination}/${filenamify(video.show.title)}/${filenamify(video.name)}.mp4`);
+        console.log(`Downloading "${video.show.title}": "${video.name}"`);
+        const request = https.get(
+          `${video.url}?api_key=${apiKey}`,
+          response => response.pipe(file)
+        );
+        // execSync(
+        //   `npx gb-dl --api-key ${apiKey} --archive --show-name "${video.show.title}" --video-name "${video.name}" --out-dir "${destination}/${filenamify(video.show.title)}"`,
+        //   { stdio: "inherit" } // this will allow us to see the console output as it downloads
+        // );
+      } catch (error) {
+        console.error(error);
+        moreResults = false;
+      }
+      await sleep(19000);
+    }
+    else console.log(`"${video.name}" is already in the archive. Skipping...`);
   }
 }
 
@@ -48,18 +64,18 @@ async function getShows() {
   return (await fetchShows(apiKey, offset, limit)).results.map(show => ({ id: show.id, title: show.title }));
 }
 
-async function getVideos(showId) {
-  const fetchVideos = async (apiKey, offset, limit) => await (await fetch(`https://www.giantbomb.com/api/videos/?api_key=${apiKey}&filter=video_show:${showId},premium:true&offset=${offset}&limit=${limit}&format=json&sort=id:asc`)).json();
+async function getVideos(show) {
+  const fetchVideos = async (apiKey, offset, limit) => await (await fetch(`https://www.giantbomb.com/api/videos/?api_key=${apiKey}&filter=video_show:${show.id},premium:true&offset=${offset}&limit=${limit}&format=json&sort=id:asc`)).json();
   const limit = 100;
   let videos = [];
   for (let moreResults = true, offset = 0; moreResults; offset += limit) {
     console.log(`Getting results starting at index ${offset}...`);
     const response = await fetchVideos(apiKey, offset, limit);
-    const responseVideos = response.results.map(video => ({ id: video.id, name: video.name }));
+    const responseVideos = response.results.map(video => ({ id: video.id, name: video.name, show: show, url: getHighestQualityUrl(video) }));
     videos = videos.concat(responseVideos);
     if (responseVideos.length < limit) moreResults = false;
     console.log(`Pausing for rate limit...`);
-    await sleep(5);
+    await sleep(19000);
   }
   return videos;
 }
