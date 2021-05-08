@@ -1,101 +1,138 @@
+const { sleep } = require('./util');
 const fetch = require('node-fetch');
-const { sleep, isInArchive, getHighestQualityUrl } = require('./util');
-const filenamify = require('filenamify');
 const fs = require('fs');
-const https = require('https');
-const path = require('path');
+const filenamify = require('filenamify');
+const stream = require("stream");
+const { promisify } = require("util");
+const got = require("got");
+
+const pipeline = promisify(stream.pipeline);
 
 const apiKey = 'API_KEY';
-const destination = '/mnt/d/Giant Bomb Archive';
 
-let execSync = require("child_process").execSync;
-
-(
-  async () => {
-    console.log(`Getting shows...`);
-    const shows = await getShows();
-
-    for (show of shows) {
-      console.log(`Getting videos for show "${show.title}"...`);
-      const videos = await getVideos(show);
-      console.log(`Downloading videos for show "${show.title}"...`);
-      await downloadVideos(videos);
-    }
+(async () => {
+  const limit = 100;
+  for (let moreVideos = true, i = 0; moreVideos; i += limit) {
+    console.log(`Getting videos ${i}-${i + limit - 1}...`);
+    const videos = await getVideosInfo(i, limit);
+    console.log(`Downloading videos ${i}=${i + limit - 1}...`);
+    await downloadVideos(videos);
+    await sleep(18000);
   }
-)();
+})();
+
+async function getVideosInfo(offset, limit) {
+  return (
+    (
+      await (
+        await fetch(`
+          https://www.giantbomb.com/api/videos/
+            ?api_key=${apiKey}
+            &format=json
+            &filter=premium:true
+            &sort=id:asc
+            &offset=${offset}
+            &limit=${limit}
+        `.replace(/\s+/g, ''))
+      ).json()
+    ).results
+  );
+}
 
 async function downloadVideos(videos) {
-  const archivePath = path.resolve(process.cwd(), "gb-dl-archive.json");
-  // Make show directory if it doesn't already exist
-  if (videos.length > 1) {
-    if (!fs.existsSync(`${destination}/${filenamify(videos[0].show.title)}`)) {
-      console.log(`Making directory ${`${destination}/${filenamify(videos[0].show.title)}`}`)
-      fs.mkdirSync(`${destination}/${filenamify(videos[0].show.title)}`);
-    }
-  }
+  const destination = '/mnt/d/Giant Bomb Archive';
   for (video of videos) {
-    if (!isInArchive(video.url, archivePath)) {
-      console.log(`Found a show not in the archive!`)
-      try {
-        const file = fs.createWriteStream(`${destination}/${filenamify(video.show.title)}/${filenamify(video.name)}.mp4`);
-        console.log(`Downloading "${video.show.title}": "${video.name}"`);
-        const request = https.get(
-          `${video.url}?api_key=${apiKey}`,
-          response => response.pipe(file)
-        );
-        // execSync(
-        //   `npx gb-dl --api-key ${apiKey} --archive --show-name "${video.show.title}" --video-name "${video.name}" --out-dir "${destination}/${filenamify(video.show.title)}"`,
-        //   { stdio: "inherit" } // this will allow us to see the console output as it downloads
-        // );
-      } catch (error) {
-        console.error(error);
-        moreResults = false;
-      }
-      await sleep(19000);
+    console.log(`Downloading "${video.video_show ? video.video_show.title : 'No show'}": "${video.name}"...`);
+    await downloadVideo(video, destination);
+    console.log('Done!');
+    await sleep(18000);
+  }
+  await sleep(18000);
+}
+
+async function downloadVideo(video, destination) {
+  if (!isInArchive(video)) {
+    // Create show directory if it doesn't already exist
+    const showPath = `${destination}/${filenamify(video.video_show ? video.video_show.title : 'No show', { replacement: '' })}`;
+    if (!fs.existsSync(showPath)) {
+      fs.mkdirSync(showPath);
     }
-    else console.log(`"${video.name}" is already in the archive. Skipping...`);
-  }
-}
-
-async function getShows() {
-  const fetchShows = async (apiKey, offset, limit) => await (await fetch(`https://www.giantbomb.com/api/video_shows/?api_key=${apiKey}&offset=${offset}&limit=${limit}&format=json&sort=id:asc`)).json();
-  let offset = 0;
-  const limit = 100;
-  return (await fetchShows(apiKey, offset, limit)).results.map(show => ({ id: show.id, title: show.title }));
-}
-
-async function getVideos(show) {
-  const fetchVideos = async (apiKey, offset, limit) => await (await fetch(`https://www.giantbomb.com/api/videos/?api_key=${apiKey}&filter=video_show:${show.id},premium:true&offset=${offset}&limit=${limit}&format=json&sort=id:asc`)).json();
-  const limit = 100;
-  let videos = [];
-  for (let moreResults = true, offset = 0; moreResults; offset += limit) {
-    console.log(`Getting results starting at index ${offset}...`);
-    const response = await fetchVideos(apiKey, offset, limit);
-    const responseVideos = response.results.map(video => ({ id: video.id, name: video.name, show: show, url: getHighestQualityUrl(video) }));
-    videos = videos.concat(responseVideos);
-    if (responseVideos.length < limit) moreResults = false;
-    console.log(`Pausing for rate limit...`);
-    await sleep(19000);
-  }
-  return videos;
-}
-
-// async function makeVideosJson() {
-//   const getVideos = async (apiKey, offset, limit) => await (await fetch(`https://www.giantbomb.com/api/videos/?api_key=${apiKey}&offset=${offset}&limit=${limit}&format=json&sort=id:asc`)).json();
-//   let offset = 0;
-//   const limit = 100;
-//   let response = await getVideos(apiKey, offset, limit);
-
-//   const stream = fs.createWriteStream('./videos.json', { encoding: 'utf8' });
-//   stream.write('[\n');
-//   for ( ; response.number_of_page_results === limit; offset += limit) {
-//     await sleep(20000);
-//     response = await (await getVideos(apiKey, offset, limit));
-//     const videos = response.results;
-//     console.log(videos.map(video => video.name));
     
-//     videos.forEach((video) => stream.write(JSON.stringify(video, null, 2) + ',\n'));
-//   }
-//   stream.write(']');
-//   stream.end();
-// }
+    // Borrowed from @lightpohl and modified a bit
+    // [gb-dl](https://github.com/lightpohl/gb-dl/blob/cafba731cfdea6afd8917b0cdbb0fca42c486c5c/bin/util.js#L428)
+    const filePath = `${showPath}/${filenamify(video.name, { replacement: '' })}.mp4`;
+    try {
+      await pipeline(
+        got
+          .stream(`${getHighestQualityVideoUrl(video)}?api_key=${apiKey}`)
+          .on('downloadProgress', progress => {
+            printProgress(progress);
+          })
+          .on('end', () => {
+            () => { process.stdout.write('\n'); }
+            console.log('Download complete!');
+          }),
+        fs.createWriteStream(filePath)
+      );
+    } catch (error) {
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+      }
+      throw error;
+    }
+    addToArchive(video);
+  }
+  else {
+    console.log(`"${video.video_show ? video.video_show.title : 'No show'}": "${video.name}" has already been downloaded. Skipping...`)
+  }
+}
+
+// Borrowed from @lightpohl
+// [gb-dl](https://github.com/lightpohl/gb-dl/blob/cafba731cfdea6afd8917b0cdbb0fca42c486c5c/bin/util.js#L322)
+function printProgress({ percent, total, transferred }) {
+  const BYTES_IN_MB = 1000000;
+
+  let line = `downloading...`;
+
+  if (transferred > 0) {
+    /*
+     * Got has a bug where "percent" will be 1 for a moment when the download starts.
+     * Ignore percent until transfer has started.
+     */
+    let percentRounded = (percent * 100).toFixed(2);
+    line += ` ${percentRounded}%`;
+
+    if (total) {
+      let totalMBs = total / BYTES_IN_MB;
+      let roundedTotalMbs = totalMBs.toFixed(2);
+      line += ` of ${roundedTotalMbs} MB`;
+    }
+  }
+
+  process.stdout.clearLine();
+  process.stdout.cursorTo(0);
+  process.stdout.write(line);
+};
+
+// Borrowed from @lightpohl
+// [gb-dl](https://github.com/lightpohl/gb-dl/blob/cafba731cfdea6afd8917b0cdbb0fca42c486c5c/bin/util.js#L466)
+function getHighestQualityVideoUrl(video) {
+  const qualities = [ 'hd', 'high', 'low', 'mobile' ];
+  for (quality of qualities) {
+    const urlOfQuality = video[`${quality}_url`];
+    if (urlOfQuality) {
+      return urlOfQuality;
+    }
+  }
+}
+
+function isInArchive(video) {
+  const archive = JSON.parse(fs.readFileSync('./video-archive.json'));
+  return archive.map(video => video.url).includes(getHighestQualityVideoUrl(video));
+}
+
+function addToArchive(video) {
+  const archive = JSON.parse(fs.readFileSync('./video-archive.json'));
+  archive.push({ id: video.id, url: getHighestQualityVideoUrl(video) });
+  fs.writeFileSync('./video-archive.json', JSON.stringify(archive, null, 2));
+}
