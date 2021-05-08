@@ -9,6 +9,7 @@ const got = require("got");
 const pipeline = promisify(stream.pipeline);
 
 const apiKey = 'API_KEY';
+const destination = '/mnt/d/Giant Bomb Archive';
 
 (async () => {
   const limit = 100;
@@ -40,7 +41,6 @@ async function getVideosInfo(offset, limit) {
 }
 
 async function downloadVideos(videos) {
-  const destination = '/mnt/d/Giant Bomb Archive';
   for (video of videos) {
     console.log(`Downloading "${video.video_show ? video.video_show.title : 'No show'}": "${video.name}"...`);
     await downloadVideo(video, destination);
