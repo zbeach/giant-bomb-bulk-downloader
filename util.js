@@ -1,4 +1,4 @@
-module.exports.sleep = async (ms) => {
-  console.log('Sleepin...');
-  new Promise(resolve => setTimeout(resolve, ms))
+module.exports.pause = async (ms) => {
+  console.log('Pausing because of that dang rate limit...');
+  await new Promise(resolve => setTimeout(resolve, ms))
 };

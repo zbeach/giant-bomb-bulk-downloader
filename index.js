@@ -1,4 +1,8 @@
-const { sleep } = require('./util');
+// Set these two variables yourself!
+const apiKey = 'YOUR_API_KEY_HERE';
+const destination = '/mnt/d/Giant Bomb Archive';
+
+const { pause } = require('./util');
 const fetch = require('node-fetch');
 const fs = require('fs');
 const filenamify = require('filenamify');
@@ -8,17 +12,20 @@ const got = require("got");
 
 const pipeline = promisify(stream.pipeline);
 
-const apiKey = 'API_KEY';
-const destination = '/mnt/d/Giant Bomb Archive';
+const archivePath = `${destination}/video-archive.json`;
 
 (async () => {
+  if (!fs.existsSync(archivePath)) {
+    fs.writeFileSync(archivePath, '[]');
+  }
+
   const limit = 100;
   for (let moreVideos = true, i = 0; moreVideos; i += limit) {
     console.log(`Getting videos ${i}-${i + limit - 1}...`);
     const videos = await getVideosInfo(i, limit);
     console.log(`Downloading videos ${i}-${i + limit - 1}...`);
     await downloadVideos(videos);
-    await sleep(18000);
+    await pause(18000);
   }
 })();
 
@@ -44,10 +51,8 @@ async function downloadVideos(videos) {
   for (video of videos) {
     console.log(`Downloading "${video.video_show ? video.video_show.title : 'No show'}": "${video.name}"...`);
     await downloadVideo(video, destination);
-    console.log('Done!');
-    await sleep(18000);
   }
-  await sleep(18000);
+  await pause(18000);
 }
 
 async function downloadVideo(video, destination) {
@@ -70,7 +75,7 @@ async function downloadVideo(video, destination) {
           })
           .on('end', () => {
             () => { process.stdout.write('\n'); }
-            console.log('Download complete!');
+            console.log('\nDownload complete!');
           }),
         fs.createWriteStream(filePath)
       );
@@ -81,6 +86,7 @@ async function downloadVideo(video, destination) {
       throw error;
     }
     addToArchive(video);
+    await pause(18000);
   }
   else {
     console.log(`"${video.video_show ? video.video_show.title : 'No show'}": "${video.name}" has already been downloaded. Skipping...`)
@@ -127,12 +133,12 @@ function getHighestQualityVideoUrl(video) {
 }
 
 function isInArchive(video) {
-  const archive = JSON.parse(fs.readFileSync('./video-archive.json'));
+  const archive = JSON.parse(fs.readFileSync(archivePath));
   return archive.map(video => video.url).includes(getHighestQualityVideoUrl(video));
 }
 
 function addToArchive(video) {
-  const archive = JSON.parse(fs.readFileSync('./video-archive.json'));
+  const archive = JSON.parse(fs.readFileSync(archivePath));
   archive.push({ id: video.id, url: getHighestQualityVideoUrl(video) });
-  fs.writeFileSync('./video-archive.json', JSON.stringify(archive, null, 2));
+  fs.writeFileSync(archivePath, JSON.stringify(archive, null, 2));
 }
