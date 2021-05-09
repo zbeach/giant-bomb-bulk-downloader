@@ -25,7 +25,6 @@ const archivePath = `${destination}/video-archive.json`;
     const videos = await getVideosInfo(i, limit);
     console.log(`Downloading videos ${i}-${i + limit - 1}...`);
     await downloadVideos(videos);
-    await pause(18000);
   }
 })();
 
@@ -49,14 +48,16 @@ async function getVideosInfo(offset, limit) {
 
 async function downloadVideos(videos) {
   for (video of videos) {
-    console.log(`Downloading "${video.video_show ? video.video_show.title : 'No show'}": "${video.name}"...`);
     await downloadVideo(video, destination);
   }
-  await pause(18000);
+  if (videos.length > 0) {
+    await pause(18000);
+  }
 }
 
 async function downloadVideo(video, destination) {
   if (!isInArchive(video)) {
+    console.log(`Downloading "${video.video_show ? video.video_show.title : 'No show'}": "${video.name}"...`);
     // Create show directory if it doesn't already exist
     const showPath = `${destination}/${filenamify(video.video_show ? video.video_show.title : 'No show', { replacement: '' })}`;
     if (!fs.existsSync(showPath)) {
@@ -86,7 +87,6 @@ async function downloadVideo(video, destination) {
       throw error;
     }
     addToArchive(video);
-    await pause(18000);
   }
   else {
     console.log(`"${video.video_show ? video.video_show.title : 'No show'}": "${video.name}" has already been downloaded. Skipping...`)
