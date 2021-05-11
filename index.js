@@ -2,6 +2,10 @@
 const apiKey = 'YOUR_API_KEY_HERE';
 const destination = '/mnt/d/Giant Bomb Archive';
 
+// 18000 ms per request is the minimum interval to ensure that the script won't exceed Giant Bomb's limit of 200
+// requests per hour.
+const requestInterval = 18000;
+
 const { pause } = require('./util');
 const fetch = require('node-fetch');
 const fs = require('fs');
@@ -51,7 +55,7 @@ async function downloadVideos(videos) {
     await downloadVideo(video, destination);
   }
   if (videos.length > 0) {
-    await pause(18000);
+    await pause(requestInterval);
   }
 }
 
